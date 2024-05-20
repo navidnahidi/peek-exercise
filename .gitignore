@@ -1,3 +1,4 @@
 node_modules/
 dist/
-indigov.db
+.DS_Store
+database.sqlite

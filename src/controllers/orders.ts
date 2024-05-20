@@ -16,6 +16,10 @@ const MAX_PAGE_LIMIT = 100;
 
 const WINDOW_TIME_IN_SECONDS = 30 * 1000;
 
+/*
+    @todo move these validators out in order to not return 500 errors
+    These should be 4xx errors
+*/
 const _createOrder = async (
   email: string,
   amount: string | number,
@@ -49,9 +53,10 @@ export const createOrder = async (ctx: Context) => {
     const order = await _createOrder(email, amount);
 
     ctx.body = order;
-  } catch (err) {
+    ctx.status = 201;
+  } catch (err: any) {
     ctx.status = 500;
-    ctx.body = "Internal Server Error";
+    ctx.body = err.message;
   }
 };
 
@@ -220,22 +225,26 @@ export const createOrderAndPay = async (ctx: Context) => {
 // that prevents duplicate payments
 // For now we are checking within a time window to prevent duplicate payments based on order id and amount
 // and a window (30 seconds)
-const _checkExistingPaymentWithinTimeWindow = async (orderId: string, amount: number, timeWindow: number): Promise<boolean> => {
-    const currentTime = new Date();
-    const startTime = new Date(currentTime.getTime() - timeWindow);
+const _checkExistingPaymentWithinTimeWindow = async (
+  orderId: string,
+  amount: number,
+  timeWindow: number
+): Promise<boolean> => {
+  const currentTime = new Date();
+  const startTime = new Date(currentTime.getTime() - timeWindow);
 
-    const hasExistingPayment = await Payment.findOne({
-      where: {
-        orderId,
-        amount,
-        createdAt: {
-          [Op.between]: [startTime, currentTime],
-        },
+  const hasExistingPayment = await Payment.findOne({
+    where: {
+      orderId,
+      amount,
+      createdAt: {
+        [Op.between]: [startTime, currentTime],
       },
-    });
+    },
+  });
 
-    return hasExistingPayment !== null;
-  };
+  return hasExistingPayment !== null;
+};
 
 export const applyPaymentToOrder = async (ctx: Context) => {
   let t;
@@ -279,7 +288,11 @@ export const applyPaymentToOrder = async (ctx: Context) => {
     const currentTime = new Date();
     const startTime = new Date(currentTime.getTime() - WINDOW_TIME_IN_SECONDS);
 
-    const hasExistingPayment = await _checkExistingPaymentWithinTimeWindow(orderId, amount, WINDOW_TIME_IN_SECONDS);
+    const hasExistingPayment = await _checkExistingPaymentWithinTimeWindow(
+      orderId,
+      amount,
+      WINDOW_TIME_IN_SECONDS
+    );
     if (hasExistingPayment) {
       ctx.status = 200;
       ctx.body = "Payment already applied";

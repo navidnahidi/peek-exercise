@@ -18,3 +18,5 @@ const startServer = async () => {
 };
 
 startServer();
+
+export { app };
