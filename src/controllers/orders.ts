@@ -6,12 +6,15 @@ import { v4 as uuidv4 } from "uuid";
 import {
   CreateOrderRequest,
   GetOrdersForCustomerRequest,
-  // ApplyPaymentRequest,
+  ApplyPaymentRequest,
   CreateOrderAndPayRequest,
 } from "../types";
+import { Op } from "sequelize";
 
 const PAGE_SIZE = 10;
 const MAX_PAGE_LIMIT = 100;
+
+const WINDOW_TIME_IN_SECONDS = 30 * 1000;
 
 const _createOrder = async (
   email: string,
@@ -53,13 +56,15 @@ export const createOrder = async (ctx: Context) => {
 };
 
 export const getOrder = async (ctx: Context) => {
-  if (!ctx.params.id) {
+  const orderId = ctx.params.id;
+
+  if (!orderId) {
     ctx.status = 400;
     ctx.body = "Order ID is required";
     return;
   }
   try {
-    const order = await Order.findByPk(ctx.params.id, { include: "payments" });
+    const order = await Order.findByPk(orderId, { include: "payments" });
     if (order) {
       ctx.body = order;
     } else {
@@ -164,6 +169,11 @@ export const getOrdersForCustomer = async (ctx: Context) => {
   }
 };
 
+// Simulate payment failure 25% of the time a-la GoblinPay
+const simulatePayment = () => {
+  return Math.random() >= 0.25;
+};
+
 export const createOrderAndPay = async (ctx: Context) => {
   const body = ctx.request.body as CreateOrderAndPayRequest;
 
@@ -177,7 +187,7 @@ export const createOrderAndPay = async (ctx: Context) => {
   try {
     const order = await _createOrder(email, amount, t);
 
-    if (Math.random() < 0.25) {
+    if (!simulatePayment()) {
       throw new Error("Payment failed");
     }
 
@@ -185,7 +195,7 @@ export const createOrderAndPay = async (ctx: Context) => {
       {
         id: uuidv4(),
         amount: normalizeFloat(paymentAmount),
-        OrderId: order.id,
+        orderId: order.id,
       },
       { transaction: t }
     );
@@ -203,5 +213,106 @@ export const createOrderAndPay = async (ctx: Context) => {
     }
     ctx.status = 400;
     ctx.message = error.message;
+  }
+};
+
+// @todo figure out how Stripe handles idempotency issues or utilize their package if possible
+// that prevents duplicate payments
+// For now we are checking within a time window to prevent duplicate payments based on order id and amount
+// and a window (30 seconds)
+const _checkExistingPaymentWithinTimeWindow = async (orderId: string, amount: number, timeWindow: number): Promise<boolean> => {
+    const currentTime = new Date();
+    const startTime = new Date(currentTime.getTime() - timeWindow);
+
+    const hasExistingPayment = await Payment.findOne({
+      where: {
+        orderId,
+        amount,
+        createdAt: {
+          [Op.between]: [startTime, currentTime],
+        },
+      },
+    });
+
+    return hasExistingPayment !== null;
+  };
+
+export const applyPaymentToOrder = async (ctx: Context) => {
+  let t;
+
+  try {
+    const orderId = ctx.params.id;
+    let { amount } = ctx.request.body as ApplyPaymentRequest;
+    console.log(amount, orderId);
+
+    amount = normalizeFloat(amount);
+
+    if (!orderId) {
+      ctx.status = 400;
+      ctx.body = "Order ID is required";
+      return;
+    }
+
+    if (!amount) {
+      ctx.status = 400;
+      ctx.body = "Payment amount is required";
+      return;
+    }
+
+    if (amount < 0) {
+      ctx.status = 400;
+      ctx.body = "Payment amount cannot be negative";
+      return;
+    }
+
+    if (Order.sequelize) {
+      t = await Order.sequelize.transaction();
+    }
+
+    const order = await Order.findByPk(orderId);
+    if (!order) {
+      ctx.status = 404;
+      ctx.body = "Order not found";
+      return;
+    }
+
+    const currentTime = new Date();
+    const startTime = new Date(currentTime.getTime() - WINDOW_TIME_IN_SECONDS);
+
+    const hasExistingPayment = await _checkExistingPaymentWithinTimeWindow(orderId, amount, WINDOW_TIME_IN_SECONDS);
+    if (hasExistingPayment) {
+      ctx.status = 200;
+      ctx.body = "Payment already applied";
+      return;
+    }
+
+    await Payment.create({ orderId, amount }, { transaction: t });
+
+    order.balance -= normalizeFloat(amount);
+    if (order.balance < 0) {
+      if (t) {
+        await t.rollback();
+      }
+      ctx.status = 400;
+      ctx.body = "Payment exceeds order balance";
+      return;
+    }
+
+    await order.save({ transaction: t });
+
+    if (t) {
+      await t.commit();
+    }
+
+    ctx.status = 201;
+
+    const orderUpdated = await Order.findByPk(orderId, { include: "payments" });
+    ctx.body = orderUpdated;
+  } catch (err) {
+    if (t) {
+      await t.rollback();
+    }
+    ctx.status = 500;
+    ctx.body = "Internal Server Error";
   }
 };

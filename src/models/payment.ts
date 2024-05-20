@@ -3,7 +3,9 @@ import { Sequelize, DataTypes, Model, Optional } from 'sequelize';
 interface PaymentAttributes {
   id: string;
   amount: number;
-  OrderId: string;
+  orderId: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 interface PaymentCreationAttributes extends Optional<PaymentAttributes, 'id'> {}
@@ -11,7 +13,7 @@ interface PaymentCreationAttributes extends Optional<PaymentAttributes, 'id'> {}
 export class Payment extends Model<PaymentAttributes, PaymentCreationAttributes> implements PaymentAttributes {
   public id!: string;
   public amount!: number;
-  public OrderId!: string;
+  public orderId!: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -29,14 +31,15 @@ export function PaymentFactory(sequelize: Sequelize): typeof Payment {
         type: DataTypes.FLOAT,
         allowNull: false
       },
-      OrderId: {
+      orderId: {
         type: DataTypes.UUID,
         allowNull: false
       }
     },
     {
       sequelize,
-      tableName: 'payments'
+      tableName: 'payments',
+      timestamps: true,
     }
   );
 
