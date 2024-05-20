@@ -1,0 +1,26 @@
+{
+    "ignorePatterns": [
+        "dist/",
+        "node_modules/"
+    ],
+    "rules": {
+        "semi": [
+            "error",
+            "never"
+        ],
+        "quotes": [
+            "error",
+            "single"
+        ],
+        "max-len": [
+            "error",
+            {
+                "code": 80
+            }
+        ],
+        "indent": [
+            "error",
+            2
+        ]
+    }
+}
